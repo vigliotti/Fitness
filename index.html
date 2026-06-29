@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fitness Tracker Pro</title>
+<style>
+body{font-family:Arial,sans-serif;background:#121212;color:#eee;max-width:1100px;margin:auto;padding:12px}
+.card{background:#1e1e1e;padding:14px;border-radius:12px;margin:12px 0}
+h1,h2{color:#9acd32}
+.exercise{background:#2a2a2a;padding:10px;border-radius:10px;margin:8px 0}
+input,button,select{padding:8px;border-radius:8px;border:1px solid #555}
+button{cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.menuWrap{position:relative}
+.menuBtn{background:#333;color:#fff;border:none;padding:6px 10px}
+.dropdown{display:none;position:absolute;right:0;top:38px;background:#2a2a2a;border:1px solid #555;border-radius:10px;padding:8px;z-index:100}
+.dropdown button{display:block;width:100%;margin:4px 0}
+.editMode .editOnly{display:inline-block}
+.editOnly{display:none}
+.progress{height:22px;background:#333;border-radius:11px;overflow:hidden}
+.bar{height:100%;background:#9acd32;width:0%}
+small{color:#bbb}
+
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:999}
+.modalContent{background:#1e1e1e;color:#eee;max-width:500px;margin:10% auto;padding:20px;border-radius:12px}
+.histItem{display:flex;justify-content:space-between;align-items:center;margin:6px 0;padding:6px;background:#2a2a2a;border-radius:8px}
+
+</style>
+</head>
+<body>
+<h1>💪 Fitness Tracker Pro</h1>
+
+<div class="card">
+<h2>Dashboard</h2>
+<div id="weekInfo"></div>
+<div class="progress"><div id="bar" class="bar"></div></div>
+</div>
+
+<div class="card">
+<h2>Körpergewicht</h2>
+<div class="row">
+<input id="bw" type="number" step="0.1" placeholder="Gewicht kg">
+<button onclick="addBodyWeight()">Speichern</button>
+</div>
+<div id="bodyHistory"></div>
+</div>
+
+<div id="plans"></div>
+
+<div class="card">
+<h2>Historie</h2>
+<div id="history"></div>
+</div>
+
+<div class="card">
+<button onclick="exportData()">Export</button>
+<input type="file" id="importFile">
+<button onclick="importData()">Import</button>
+</div>
+
+
+<div id="historyModal" class="modal">
+  <div class="modalContent">
+    <h3>Gewichtsverlauf</h3>
+    <div id="historyList"></div>
+    <button onclick="closeHistoryModal()">Schließen</button>
+  </div>
+</div>
+
+<script>
+function weekNo(){
+ const d=new Date();
+ const onejan=new Date(d.getFullYear(),0,1);
+ return Math.ceil((((d-onejan)/86400000)+onejan.getDay()+1)/7);
+}
+
+const defaults=[
+{name:"Brust & Trizeps",done:false,ex:[
+{name:"Bankdrücken",sets:4,reps:"6-10",last:"",history:[]},
+{name:"Schrägbankdrücken",sets:3,reps:"8-12",last:"",history:[]},
+{name:"Brustpresse",sets:3,reps:"10-12",last:"",history:[]},
+{name:"Trizeps Pushdown",sets:3,reps:"10-15",last:"",history:[]},
+{name:"Überkopf-Trizeps",sets:3,reps:"10-15",last:"",history:[]}
+]},
+{name:"Rücken & Bizeps",done:false,ex:[
+{name:"Latzug",sets:4,reps:"8-12",last:"",history:[]},
+{name:"Einarmiges Kurzhantelrudern",sets:4,reps:"8-12",last:"",history:[]},
+{name:"Reverse Butterfly",sets:3,reps:"12-15",last:"",history:[]},
+{name:"Hammercurls",sets:3,reps:"10-12",last:"",history:[]}
+]},
+{name:"Beine & Schultern",done:false,ex:[
+{name:"Beinpresse",sets:4,reps:"10-15",last:"",history:[]},
+{name:"Beinstrecker",sets:3,reps:"12-15",last:"",history:[]},
+{name:"Schulterdrücken",sets:3,reps:"8-12",last:"",history:[]},
+{name:"Seitheben",sets:3,reps:"12-15",last:"",history:[]}
+]}
+];
+
+let editMode=false;
+let db=JSON.parse(localStorage.getItem("fitnessPro")||"null")||{
+week:weekNo(),
+completed:0,
+plans:defaults,
+history:[],
+bodyweight:[]
+};
+
+if(db.week!==weekNo()){
+ db.history.push({week:db.week,completed:db.completed,total:db.plans.length,date:new Date().toLocaleDateString()});
+ db.week=weekNo();
+ db.completed=0;
+ db.plans.forEach(p=>p.done=false);
+}
+
+function save(){
+ localStorage.setItem("fitnessPro",JSON.stringify(db));
+ render();
+}
+
+function deleteWeightHistory(pi,ei,index){
+ let ex=db.plans[pi].ex[ei];
+ if(!confirm("Eintrag löschen?")) return;
+ ex.history.splice(index,1);
+ ex.last = ex.history.length ? ex.history[ex.history.length-1].kg : "";
+ save();
+ showHistory(pi,ei);
+}
+
+function closeHistoryModal(){
+ document.getElementById("historyModal").style.display="none";
+}
+
+function render(){
+ const totalTrainings = db.plans.length || 1;
+ document.getElementById("weekInfo").innerHTML=`KW ${db.week}<br>${db.completed}/${totalTrainings} Trainings erledigt`;
+ document.getElementById("bar").style.width=Math.min(100,(db.completed/totalTrainings)*100)+"%";
+
+ let html="";
+ db.plans.forEach((p,pi)=>{
+ html+=`
+<div class="card">
+<div class="row" style="justify-content:space-between">
+<h2>${p.name}</h2>
+<div class="menuWrap">
+<button class="menuBtn" onclick="toggleMenu(${pi})">☰</button>
+<div class="dropdown" id="menu_${pi}">
+<button onclick="toggleEditMode()">✏️ Bearbeitungsmodus</button>
+<button onclick="editTraining(${pi})">Training bearbeiten</button>
+<button onclick="addExercise(${pi})">Übung hinzufügen</button>
+<button onclick="deleteTraining(${pi})">Training löschen</button>
+</div>
+</div>
+</div>
+`;
+
+  p.ex.forEach((e,ei)=>{
+   html+=`<div class="exercise">
+   <b>${e.name}</b> <small>(${e.sets} Sätze | ${e.reps})</small><br>
+   Letztes Gewicht: <b>${e.last||"-"} kg</b><br>
+   <div class="row">
+   <input type="number" placeholder="Gewicht" id="w_${pi}_${ei}">
+   <button onclick="saveWeight(${pi},${ei})">Gewicht speichern</button>
+   <button onclick="showHistory(${pi},${ei})">Verlauf</button>
+   <button class="editOnly" onclick="editExercise(${pi},${ei})">Bearbeiten</button>\n   <button class="editOnly" onclick="deleteExercise(${pi},${ei})">Löschen</button>
+   </div>
+   </div>`;
+  });
+
+  html+=`
+  <button class="editOnly" onclick="addExercise(${pi})">➕ Übung</button>
+
+<button onclick="finishTraining(${pi})">
+${p.done ? '↩️ Training zurücksetzen' : '✅ Training abschließen'}
+</button>
+
+  </div>`;
+ });
+
+ html+=`<div class="card"><button onclick="addTraining()">➕ Neues Training</button></div>`;
+ document.getElementById("plans").innerHTML=html;
+
+document.getElementById("history").innerHTML =
+ db.history.length
+ ? db.history.map((h,i)=>`
+   <div class="row">
+     <span>KW ${h.week}: ${h.completed}/${h.total || 3} (${h.date})</span>
+     <button onclick="deleteHistory(${i})">🗑️</button>
+   </div>
+ `).join("")
+ : "Keine Historie";
+
+document.getElementById("bodyHistory").innerHTML =
+ db.bodyweight
+ .map((x,i)=>`
+ <div class="row">
+   <span>${x.date}: ${x.kg} kg</span>
+   <button onclick="deleteBodyWeight(${i})">🗑️</button>
+ </div>
+ `)
+ .reverse()
+ .join("");
+
+}
+
+function saveWeight(pi,ei){
+ let val=document.getElementById(`w_${pi}_${ei}`).value;
+ if(!val)return;
+ let ex=db.plans[pi].ex[ei];
+ ex.last=val;
+ ex.history.push({date:new Date().toLocaleDateString(),kg:val});
+ save();
+}
+
+
+function showHistory(pi,ei){
+ let ex=db.plans[pi].ex[ei];
+ let list=document.getElementById("historyList");
+ if(!ex.history.length){
+   list.innerHTML="Keine Daten vorhanden";
+ }else{
+   list.innerHTML=ex.history.map((h,i)=>`
+    <div class="histItem">
+      <span>${h.date} - ${h.kg} kg</span>
+      <button onclick="deleteWeightHistory(${pi},${ei},${i})">🗑️</button>
+    </div>`).join("");
+ }
+ document.getElementById("historyModal").style.display="block";
+}
+
+
+function editExercise(pi,ei){
+ let ex=db.plans[pi].ex[ei];
+ let n=prompt("Name",ex.name); if(n!==null) ex.name=n;
+ let s=prompt("Sätze",ex.sets); if(s!==null) ex.sets=s;
+ let r=prompt("Wiederholungen",ex.reps); if(r!==null) ex.reps=r;
+ save();
+}
+
+function deleteExercise(pi,ei){
+ if(confirm("Löschen?")){
+   db.plans[pi].ex.splice(ei,1);
+   save();
+ }
+}
+
+function addExercise(pi){
+ let n=prompt("Übung");
+ if(!n)return;
+ db.plans[pi].ex.push({name:n,sets:3,reps:"10-12",last:"",history:[]});
+ save();
+}
+
+function deleteHistory(index){
+ if(confirm("Historieneintrag löschen?")){
+   db.history.splice(index,1);
+   save();
+ }
+}
+
+function addTraining(){
+ let n=prompt("Trainingsname");
+ if(!n)return;
+ db.plans.push({name:n,done:false,ex:[]});
+ save();
+}
+
+function editTraining(pi){
+ let n=prompt("Trainingsname", db.plans[pi].name);
+ if(!n)return;
+ db.plans[pi].name=n;
+ save();
+}
+
+function deleteTraining(pi){
+ if(confirm("Training wirklich löschen?")){
+   db.plans.splice(pi,1);
+   save();
+ }
+}
+
+function finishTraining(pi){
+
+ if(db.plans[pi].done){
+
+   db.plans[pi].done=false;
+
+   if(db.completed > 0){
+     db.completed--;
+   }
+
+ } else {
+
+   db.plans[pi].done=true;
+   db.completed++;
+
+ }
+
+ save();
+}
+
+function addBodyWeight(){
+ let kg=document.getElementById("bw").value;
+ if(!kg)return;
+ db.bodyweight.push({date:new Date().toLocaleDateString(),kg});
+ save();
+}
+
+function deleteBodyWeight(index){
+ if(confirm("Gewichtseintrag löschen?")){
+   db.bodyweight.splice(index,1);
+   save();
+ }
+}
+
+function exportData(){
+ const a=document.createElement("a");
+ a.href=URL.createObjectURL(new Blob([JSON.stringify(db,null,2)],{type:"application/json"}));
+ a.download="fitness-backup.json";
+ a.click();
+}
+
+function importData(){
+ let f=document.getElementById("importFile").files[0];
+ if(!f)return;
+ let r=new FileReader();
+ r.onload=e=>{db=JSON.parse(e.target.result);save();};
+ r.readAsText(f);
+}
+
+
+function toggleMenu(pi){
+ document.querySelectorAll(".dropdown").forEach(x=>x.style.display="none");
+ let m=document.getElementById("menu_"+pi);
+ if(m) m.style.display=m.style.display==="block"?"none":"block";
+}
+
+function toggleEditMode(){
+ editMode=!editMode;
+ document.body.classList.toggle("editMode",editMode);
+ document.querySelectorAll(".dropdown").forEach(x=>x.style.display="none");
+}
+
+document.addEventListener("click",e=>{
+ if(!e.target.closest(".menuWrap")){
+  document.querySelectorAll(".dropdown").forEach(x=>x.style.display="none");
+ }
+});
+
+render();
+
+</script>
+</body>
+</html>
