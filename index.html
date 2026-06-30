@@ -31,6 +31,22 @@ small{color:#bbb}
 <body>
 <h1>💪 Fitness Tracker Pro</h1>
 
+<div class="card" id="authCard">
+<div id="userInfo" style="margin-bottom:10px;font-weight:bold"></div>
+<h2>Login</h2>
+<input id="email" type="email" placeholder="E-Mail">
+<input id="password" type="password" placeholder="Passwort">
+
+<button onclick="login()">Login</button>
+<button onclick="logout()">Logout</button>
+<button id="resetBtn" onclick="resetPassword()" style="display:none">Passwort ändern</button>
+
+<div style="margin-top:10px;font-size:14px">
+Kein Login vorhanden?
+<a href="mailto:vigliotti1@outlook.de">Schreib mir eine E-Mail</a>
+</div>
+</div>
+
 <div class="card">
 <h2>Dashboard</h2>
 <div id="weekInfo"></div>
@@ -45,6 +61,9 @@ small{color:#bbb}
 </div>
 <div id="bodyHistory"></div>
 </div>
+
+
+
 
 <div id="plans"></div>
 
@@ -98,7 +117,7 @@ const defaults=[
 ];
 
 let editMode=false;
-let db=JSON.parse(localStorage.getItem("fitnessPro")||"null")||{
+let db={
 week:weekNo(),
 completed:0,
 plans:defaults,
@@ -114,7 +133,7 @@ if(db.week!==weekNo()){
 }
 
 function save(){
- localStorage.setItem("fitnessPro",JSON.stringify(db));
+ if(window.cloudSave){ window.cloudSave(); }
  render();
 }
 
@@ -148,7 +167,7 @@ function render(){
 <button onclick="toggleEditMode()">✏️ Bearbeitungsmodus</button>
 <button onclick="editTraining(${pi})">Training bearbeiten</button>
 <button onclick="addExercise(${pi})">Übung hinzufügen</button>
-<button onclick="deleteTraining(${pi})">Training löschen</button>
+<button onclick="moveTraining(${pi},-1)">⬆️ Training hoch</button><button onclick="moveTraining(${pi},1)">⬇️ Training runter</button><button onclick="deleteTraining(${pi})">Training löschen</button>
 </div>
 </div>
 </div>
@@ -162,7 +181,7 @@ function render(){
    <input type="number" placeholder="Gewicht" id="w_${pi}_${ei}">
    <button onclick="saveWeight(${pi},${ei})">Gewicht speichern</button>
    <button onclick="showHistory(${pi},${ei})">Verlauf</button>
-   <button class="editOnly" onclick="editExercise(${pi},${ei})">Bearbeiten</button>\n   <button class="editOnly" onclick="deleteExercise(${pi},${ei})">Löschen</button>
+   <button class="editOnly" onclick="editExercise(${pi},${ei})">Bearbeiten</button>\n   <button class="editOnly" onclick="moveExercise(${pi},${ei},-1)">⬆️</button><button class="editOnly" onclick="moveExercise(${pi},${ei},1)">⬇️</button><button class="editOnly" onclick="deleteExercise(${pi},${ei})">Löschen</button>
    </div>
    </div>`;
   });
@@ -347,8 +366,165 @@ document.addEventListener("click",e=>{
  }
 });
 
+
+function moveTraining(pi,dir){
+ const ni=pi+dir;
+ if(ni<0||ni>=db.plans.length) return;
+ [db.plans[pi],db.plans[ni]]=[db.plans[ni],db.plans[pi]];
+ save();
+}
+
+function moveExercise(pi,ei,dir){
+ const arr=db.plans[pi].ex;
+ const ni=ei+dir;
+ if(ni<0||ni>=arr.length) return;
+ [arr[ei],arr[ni]]=[arr[ni],arr[ei]];
+ save();
+}
+
+
+function normalizeDb(){
+ if(!db) db={};
+ if(!db.week) db.week=weekNo();
+ if(typeof db.completed!=="number") db.completed=0;
+ if(!Array.isArray(db.history)) db.history=[];
+ if(!Array.isArray(db.bodyweight)) db.bodyweight=[];
+ if(!Array.isArray(db.plans)) db.plans=JSON.parse(JSON.stringify(defaults));
+
+ db.plans.forEach(pl=>{
+   if(!Array.isArray(pl.ex)) pl.ex=[];
+   pl.ex.forEach(ex=>{
+      if(!Array.isArray(ex.history)) ex.history=[];
+      if(ex.last===undefined) ex.last="";
+   });
+ });
+}
+
+normalizeDb();
+window.db=db;
 render();
 
 </script>
-</body>
-</html>
+
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
+import { getDatabase, ref, set, get } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-database.js";
+
+const firebaseConfig={
+apiKey:"AIzaSyAjF0SlQ_wZlGYBIBlL2aVQdvO1kcgi0Us",
+authDomain:"projekt1-12e20.firebaseapp.com",
+databaseURL:"https://projekt1-12e20-default-rtdb.europe-west1.firebasedatabase.app",
+projectId:"projekt1-12e20",
+storageBucket:"projekt1-12e20.firebasestorage.app",
+messagingSenderId:"175090852891",
+appId:"1:175090852891:web:77f9da5b2378f222cd84be"
+};
+
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const rtdb=getDatabase(app);
+
+window.login=async()=>{
+ try{
+   await signInWithEmailAndPassword(auth,email.value,password.value);
+   alert("Login erfolgreich");
+ }catch(e){
+   alert("Loginfehler: "+e.message);
+ }
+};
+
+window.logout=async()=>{
+ await signOut(auth);
+
+ db={
+   week:weekNo(),
+   completed:0,
+   plans:JSON.parse(JSON.stringify(defaults)),
+   history:[],
+   bodyweight:[]
+ };
+
+ window.db=db;
+ normalizeDb();
+ render();
+
+ 
+};
+
+async function getBereich(){
+ const snap=await get(ref(rtdb,"personZuordnung/"+auth.currentUser.uid));
+ if(!snap.exists()) return null;
+ return snap.val();
+}
+
+window.cloudSave=async()=>{
+ try{
+   if(!auth.currentUser) return;
+   const bereich=await getBereich();
+   if(!bereich){ alert("Keine personZuordnung gefunden"); return; }
+   await set(ref(rtdb,"fitnessTracker/"+bereich),window.db);
+ }catch(e){
+   console.error(e);
+ }
+};
+
+window.cloudLoad=async()=>{
+ try{
+   if(!auth.currentUser) return;
+   const bereich=await getBereich();
+   if(!bereich){ alert("Keine personZuordnung gefunden"); return; }
+
+   const snap=await get(ref(rtdb,"fitnessTracker/"+bereich));
+   if(snap.exists()){
+      window.db=snap.val();
+      db=window.db;
+      normalizeDb();
+      render();
+   }else{
+      await set(ref(rtdb,"fitnessTracker/"+bereich),window.db);
+   }
+ }catch(e){
+   console.error(e);
+ }
+};
+
+
+window.resetPassword=async()=>{
+ if(!auth.currentUser) return;
+ try{
+   await sendPasswordResetEmail(auth,auth.currentUser.email);
+   alert("Passwort-Reset-Mail wurde gesendet.");
+ }catch(e){
+   alert("Fehler: "+e.message);
+ }
+};
+
+onAuthStateChanged(auth,async(user)=>{
+ const loginBtn=document.querySelector('button[onclick="login()"]');
+ const logoutBtn=document.querySelector('button[onclick="logout()"]');
+ const resetBtn=document.getElementById("resetBtn");
+
+ if(user){
+   document.getElementById("userInfo").innerHTML="Angemeldet als: "+user.email;
+
+   email.style.display="none";
+   password.style.display="none";
+   loginBtn.style.display="none";
+   logoutBtn.style.display="inline-block";
+   resetBtn.style.display="inline-block";
+
+   window.cloudLoad();
+ }else{
+   document.getElementById("userInfo").innerHTML="";
+
+   email.style.display="inline-block";
+   password.style.display="inline-block";
+   loginBtn.style.display="inline-block";
+   logoutBtn.style.display="none";
+   resetBtn.style.display="none";
+ }
+});
+</script>
+</body></html>
