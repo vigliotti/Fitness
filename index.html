@@ -18,6 +18,8 @@ button{cursor:pointer}
 .dropdown button{display:block;width:100%;margin:4px 0}
 .editMode .editOnly{display:inline-block}
 .editOnly{display:none}
+.trainingContent{display:block}
+.collapsed .trainingContent{display:none}
 .progress{height:22px;background:#333;border-radius:11px;overflow:hidden}
 .bar{height:100%;background:#9acd32;width:0%}
 small{color:#bbb}
@@ -125,12 +127,40 @@ history:[],
 bodyweight:[]
 };
 
-if(db.week!==weekNo()){
- db.history.push({week:db.week,completed:db.completed,total:db.plans.length,date:new Date().toLocaleDateString()});
- db.week=weekNo();
- db.completed=0;
- db.plans.forEach(p=>p.done=false);
+
+let collapsedState={};
+let historyCollapsed=true;
+let bodyWeightCollapsed=true;
+
+
+
+
+
+function checkNewWeek(){
+ const currentWeek = weekNo();
+
+ if(Number(db.week) !== Number(currentWeek)){
+   db.history.push({
+     week: db.week,
+     completed: db.completed,
+     total: db.plans.length
+   });
+
+   db.week = currentWeek;
+   db.completed = 0;
+
+   db.plans.forEach(p=>{
+     p.done = false;
+   });
+
+   collapsedState = {};
+
+   if(window.cloudSave){
+      window.cloudSave();
+   }
+ }
 }
+
 
 function save(){
  if(window.cloudSave){ window.cloudSave(); }
@@ -158,9 +188,9 @@ function render(){
  let html="";
  db.plans.forEach((p,pi)=>{
  html+=`
-<div class="card">
+<div class="card ${(p.done && collapsedState[pi] !== false) || collapsedState[pi]===true ? "collapsed" : ""}">
 <div class="row" style="justify-content:space-between">
-<h2>${p.name}</h2>
+<h2 onclick="toggleTraining(${pi})" style="cursor:pointer">${p.done ? "✅ " : ""}${p.name} ${((p.done && collapsedState[pi] !== false) || collapsedState[pi]===true) ? "▼" : "▲"}</h2>
 <div class="menuWrap">
 <button class="menuBtn" onclick="toggleMenu(${pi})">☰</button>
 <div class="dropdown" id="menu_${pi}">
@@ -171,6 +201,7 @@ function render(){
 </div>
 </div>
 </div>
+<div class="trainingContent">
 `;
 
   p.ex.forEach((e,ei)=>{
@@ -193,32 +224,39 @@ function render(){
 ${p.done ? '↩️ Training zurücksetzen' : '✅ Training abschließen'}
 </button>
 
-  </div>`;
+  </div></div>`;
  });
 
  html+=`<div class="card"><button onclick="addTraining()">➕ Neues Training</button></div>`;
  document.getElementById("plans").innerHTML=html;
 
-document.getElementById("history").innerHTML =
- db.history.length
- ? db.history.map((h,i)=>`
-   <div class="row">
-     <span>KW ${h.week}: ${h.completed}/${h.total || 3} (${h.date})</span>
-     <button onclick="deleteHistory(${i})">🗑️</button>
-   </div>
- `).join("")
- : "Keine Historie";
+{
+ const rev=[...db.history].reverse();
+ let h=`<div style="cursor:pointer;font-weight:bold" onclick="toggleHistorySection()">Historie ${historyCollapsed?'▼':'▲'}</div>`;
+ if(rev.length){
+   h+=`<div class="row"><span>KW ${rev[0].week}: ${rev[0].completed}/${rev[0].total||3}</span><button class="editOnly" onclick="deleteHistory(${db.history.length-1-(0)})">🗑️</button></div>`;
+   if(!historyCollapsed){
+      rev.slice(1).forEach((x,idx)=>{
+         h+=`<div class="row"><span>KW ${x.week}: ${x.completed}/${x.total||3}</span><button class="editOnly" onclick="deleteHistory(${db.history.length-1-(idx+1)})">🗑️</button></div>`;
+      });
+   }
+ } else h+="Keine Historie";
+ document.getElementById("history").innerHTML=h;
+}
 
-document.getElementById("bodyHistory").innerHTML =
- db.bodyweight
- .map((x,i)=>`
- <div class="row">
-   <span>${x.date}: ${x.kg} kg</span>
-   <button onclick="deleteBodyWeight(${i})">🗑️</button>
- </div>
- `)
- .reverse()
- .join("");
+{
+ const rev=[...db.bodyweight].reverse();
+ let b=`<div style="cursor:pointer;font-weight:bold" onclick="toggleBodyWeightSection()">Verlauf ${bodyWeightCollapsed?'▼':'▲'}</div>`;
+ if(rev.length){
+   b+=`<div class="row"><span>${rev[0].date}: ${rev[0].kg} kg</span><button class="editOnly" onclick="deleteBodyWeight(${db.bodyweight.length-1})">🗑️</button></div>`;
+   if(!bodyWeightCollapsed){
+      rev.slice(1).forEach((x,idx)=>{
+        b+=`<div class="row"><span>${x.date}: ${x.kg} kg</span><button class="editOnly" onclick="deleteBodyWeight(${db.bodyweight.length-2-idx})">🗑️</button></div>`;
+      });
+   }
+ }
+ document.getElementById("bodyHistory").innerHTML=b;
+}
 
 }
 
@@ -270,6 +308,18 @@ function addExercise(pi){
  save();
 }
 
+
+function toggleHistorySection(){
+ historyCollapsed=!historyCollapsed;
+ render();
+}
+
+function toggleBodyWeightSection(){
+ bodyWeightCollapsed=!bodyWeightCollapsed;
+ render();
+}
+
+
 function deleteHistory(index){
  if(confirm("Historieneintrag löschen?")){
    db.history.splice(index,1);
@@ -298,6 +348,13 @@ function deleteTraining(pi){
  }
 }
 
+
+function toggleTraining(pi){
+ const isCollapsed = (db.plans[pi].done && collapsedState[pi] !== false) || collapsedState[pi]===true;
+ collapsedState[pi] = !isCollapsed;
+ render();
+}
+
 function finishTraining(pi){
 
  if(db.plans[pi].done){
@@ -312,6 +369,7 @@ function finishTraining(pi){
 
    db.plans[pi].done=true;
    db.completed++;
+   collapsedState[pi]=true;
 
  }
 
@@ -402,6 +460,7 @@ function normalizeDb(){
 
 normalizeDb();
 window.db=db;
+checkNewWeek();
 render();
 
 </script>
@@ -481,6 +540,7 @@ window.cloudLoad=async()=>{
       window.db=snap.val();
       db=window.db;
       normalizeDb();
+      checkNewWeek();
       render();
    }else{
       await set(ref(rtdb,"fitnessTracker/"+bereich),window.db);
